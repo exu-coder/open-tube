@@ -219,6 +219,7 @@ impl Engine {
         Ok(final_paths[0].to_string_lossy().into_owned())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn download_direct<F>(
         &self,
         stream: &Stream,
@@ -272,6 +273,7 @@ impl Engine {
         Ok(written)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn download_hls<F>(
         &self,
         stream: &Stream,
@@ -370,7 +372,7 @@ impl Engine {
             ordered[index] = Some(bytes?);
         }
 
-        for (segment, bytes) in playlist.segments.iter().zip(ordered.into_iter()) {
+        for (segment, bytes) in playlist.segments.iter().zip(ordered) {
             let bytes = bytes.expect("all segments collected above");
             let plain = match &segment.key {
                 Some(key) => {
