@@ -12,7 +12,8 @@ captures/
 *.iml
 .idea/
 
-# Generated UniFFI output (bindings go to build/, .so to jniLibs/)
+# Generated UniFFI output (bindings + native libs)
+/app/src/main/java/uniffi/
 /app/src/main/jniLibs/
 
 # Signing / secrets

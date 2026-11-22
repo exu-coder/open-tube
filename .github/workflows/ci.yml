@@ -78,7 +78,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Export NDK location
-        run: echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+        run: |
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
 
       - name: Build host cdylib (source of UniFFI metadata)
         run: cargo build -p snap-ffi
@@ -88,11 +90,11 @@ jobs:
           cargo run -p snap-ffi --features cli --bin uniffi-bindgen -- generate \
             --library target/debug/libsnap_ffi.so \
             --language kotlin \
-            --out-dir app/build/generated/uniffi \
+            --out-dir app/src/main/java \
             --no-format
 
       - name: Show generated bindings
-        run: find app/build/generated/uniffi -type f -print -exec head -n 3 {} \;
+        run: find app/src/main/java/uniffi -type f -print -exec head -n 3 {} \;
 
       - name: Build Android native libraries
         env:

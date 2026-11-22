@@ -24,7 +24,7 @@ cargo test --workspace
 cargo build -p snap-ffi
 cargo run -p snap-ffi --features cli --bin uniffi-bindgen -- generate \
   --library target/debug/libsnap_ffi.so \
-  --language kotlin --out-dir app/build/generated/uniffi --no-format
+  --language kotlin --out-dir app/src/main/java --no-format
 
 export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
 export CARGO_NDK_PLATFORM=26
