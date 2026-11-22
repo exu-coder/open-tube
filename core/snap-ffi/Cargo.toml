@@ -19,5 +19,10 @@ path = "src/bin/uniffi-bindgen.rs"
 required-features = ["cli"]
 
 [dependencies]
+snap-core = { path = "../snap-core" }
+snap-engine = { path = "../snap-engine" }
 uniffi = "0.32"
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
