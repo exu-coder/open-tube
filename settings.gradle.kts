@@ -14,6 +14,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Open tube"
+rootProject.name = "open-tube"
 
 include(":app")

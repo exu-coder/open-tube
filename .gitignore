@@ -1,8 +1,27 @@
-/target
-/app/build
-/app/src/main/java/snap*
-/.gradle
-local.properties
-*.so
+# Rust
+/target/
+
+# Gradle / Android
+/.gradle/
+.gradle/
+/build/
+/app/build/
+/local.properties
+.cxx/
+captures/
+*.iml
+.idea/
+
+# Generated UniFFI output (bindings go to build/, .so to jniLibs/)
+/app/src/main/jniLibs/
+
+# Signing / secrets
+*.jks
+*.keystore
 *.apk
 *.apks
+.env
+
+# OS / logs
+.DS_Store
+*.log

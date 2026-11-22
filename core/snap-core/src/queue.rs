@@ -1,7 +1,8 @@
 //! Durable task queue over the SQLite `downloads` table.
 //!
-//! Tasks persist across restarts: after app relaunch, [`Queue::open`] and
-//! [`Queue::pop_next`] yield the oldest queued task again.
+//! Tasks persist across restarts: [`Queue::open`] requeues anything that was
+//! `running`/`merging` when the process died, and [`Queue::claim_next`] hands
+//! the oldest queued task to exactly one worker.
 
 use std::path::Path;
 use std::sync::Mutex;
@@ -12,6 +13,9 @@ use crate::db::open_database;
 use crate::error::{SnapError, SnapResult};
 use crate::models::{DownloadState, DownloadTask, MediaInfo, Stream};
 
+const TASK_COLUMNS: &str =
+    "id, url, title, thumbnail, state, progress, output_path, error, streams, chosen_streams";
+
 /// Thread-safe queue over SQLite (single connection, mutex-guarded).
 pub struct Queue {
     conn: Mutex<Connection>,
@@ -20,23 +24,44 @@ pub struct Queue {
 impl Queue {
     pub fn open(path: &Path) -> SnapResult<Self> {
         let conn = open_database(path)?;
+        // Interrupted work is resumed, not shown as stuck forever.
+        conn.execute(
+            "UPDATE downloads SET state = 'queued' WHERE state IN ('running', 'merging')",
+            [],
+        )?;
         Ok(Queue {
             conn: Mutex::new(conn),
         })
     }
 
     fn with_conn<T>(&self, f: impl FnOnce(&Connection) -> SnapResult<T>) -> SnapResult<T> {
-        let conn = self.conn.lock().map_err(|_| SnapError::Internal("db lock poisoned".into()))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| SnapError::Internal("db lock poisoned".into()))?;
         f(&conn)
     }
 
-    /// Push a new task into the queue (state: queued).
+    /// Insert a task, or update it in place without losing its FIFO position.
     pub fn push(&self, task: &DownloadTask) -> SnapResult<()> {
+        let streams = serde_json::to_string(&task.media_info.streams)?;
+        let chosen = serde_json::to_string(&task.chosen_streams)?;
         self.with_conn(|conn| {
             conn.execute(
-                "INSERT OR REPLACE INTO downloads
-                    (id, url, title, thumbnail, state, progress, output_path, created_at, error)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                "INSERT INTO downloads
+                    (id, url, title, thumbnail, state, progress, output_path, created_at, error,
+                     streams, chosen_streams)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                 ON CONFLICT(id) DO UPDATE SET
+                    url = excluded.url,
+                    title = excluded.title,
+                    thumbnail = excluded.thumbnail,
+                    state = excluded.state,
+                    progress = excluded.progress,
+                    output_path = excluded.output_path,
+                    error = excluded.error,
+                    streams = excluded.streams,
+                    chosen_streams = excluded.chosen_streams",
                 params![
                     task.id,
                     task.media_info.source_url,
@@ -47,53 +72,52 @@ impl Queue {
                     task.output_path,
                     now_iso8601(),
                     task.error,
+                    streams,
+                    chosen,
                 ],
             )?;
             Ok(())
         })
     }
 
-    /// Oldest queued task (FIFO). Does not change state.
-    pub fn pop_next(&self) -> SnapResult<Option<DownloadTask>> {
+    /// Atomically claim the oldest queued task and mark it `running`.
+    ///
+    /// Returns `None` when nothing is queued. Concurrent workers each get a
+    /// distinct task because the state change happens in the same statement.
+    pub fn claim_next(&self) -> SnapResult<Option<DownloadTask>> {
         self.with_conn(|conn| {
-            let row: Option<(String, String, Option<String>, String, f64)> = conn
-                .query_row(
-                    "SELECT id, url, thumbnail, state, progress FROM downloads
-                     WHERE state = 'queued'
-                     ORDER BY created_at ASC, rowid ASC
-                     LIMIT 1",
-                    [],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
-                )
-                .optional()?;
-            Ok(row.map(|(id, url, thumbnail, _state, progress)| DownloadTask {
-                id,
-                media_info: MediaInfo {
-                    id: String::new(),
-                    title: String::new(),
-                    uploader: String::new(),
-                    duration_s: None,
-                    thumbnail,
-                    source_url: url,
-                    streams: Vec::new(),
-                },
-                chosen_streams: Vec::new(),
-                state: DownloadState::Queued,
-                progress,
-                speed_bps: None,
-                eta_s: None,
-                output_path: None,
-                error: None,
-            }))
+            let sql = format!(
+                "UPDATE downloads SET state = 'running'
+                 WHERE id = (SELECT id FROM downloads WHERE state = 'queued'
+                             ORDER BY created_at ASC, rowid ASC LIMIT 1)
+                 RETURNING {TASK_COLUMNS}"
+            );
+            let task = conn.query_row(&sql, [], task_row_mapper).optional()?;
+            Ok(task)
         })
     }
 
-    /// Update mutable fields of an existing task (state, progress, output_path, error).
-    pub fn update(&self, task: &DownloadTask) -> SnapResult<()> {
+    /// Oldest queued task without claiming it (diagnostics/tests only).
+    pub fn peek_next(&self) -> SnapResult<Option<DownloadTask>> {
         self.with_conn(|conn| {
-            conn.execute(
-                "UPDATE downloads SET state = ?1, progress = ?2, output_path = ?3, error = ?4
-                 WHERE id = ?5",
+            let sql = format!(
+                "SELECT {TASK_COLUMNS} FROM downloads
+                 WHERE state = 'queued'
+                 ORDER BY created_at ASC, rowid ASC
+                 LIMIT 1"
+            );
+            let task = conn.query_row(&sql, [], task_row_mapper).optional()?;
+            Ok(task)
+        })
+    }
+
+    /// Update mutable fields of an existing task.
+    pub fn update(&self, task: &DownloadTask) -> SnapResult<()> {
+        let changed = self.with_conn(|conn| {
+            Ok(conn.execute(
+                "UPDATE downloads
+                    SET state = ?1, progress = ?2, output_path = ?3, error = ?4
+                  WHERE id = ?5",
                 params![
                     task.state.as_str(),
                     task.progress,
@@ -101,19 +125,21 @@ impl Queue {
                     task.error,
                     task.id,
                 ],
-            )?;
-            Ok(())
-        })
+            )?)
+        })?;
+        if changed == 0 {
+            return Err(SnapError::Internal(format!("no such task: {}", task.id)));
+        }
+        Ok(())
     }
 
     /// All tasks, newest first.
     pub fn list(&self) -> SnapResult<Vec<DownloadTask>> {
         self.with_conn(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT id, url, title, thumbnail, state, progress, output_path, error
-                 FROM downloads
-                 ORDER BY created_at DESC, rowid DESC",
-            )?;
+            let sql = format!(
+                "SELECT {TASK_COLUMNS} FROM downloads ORDER BY created_at DESC, rowid DESC"
+            );
+            let mut stmt = conn.prepare(&sql)?;
             let rows = stmt.query_map([], task_row_mapper)?;
             let mut out = Vec::new();
             for r in rows {
@@ -126,12 +152,11 @@ impl Queue {
     /// Tasks filtered by state, newest first.
     pub fn list_state(&self, state: DownloadState) -> SnapResult<Vec<DownloadTask>> {
         self.with_conn(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT id, url, title, thumbnail, state, progress, output_path, error
-                 FROM downloads
-                 WHERE state = ?1
-                 ORDER BY created_at DESC, rowid DESC",
-            )?;
+            let sql = format!(
+                "SELECT {TASK_COLUMNS} FROM downloads WHERE state = ?1
+                 ORDER BY created_at DESC, rowid DESC"
+            );
+            let mut stmt = conn.prepare(&sql)?;
             let rows = stmt.query_map(params![state.as_str()], task_row_mapper)?;
             let mut out = Vec::new();
             for r in rows {
@@ -142,11 +167,15 @@ impl Queue {
     }
 
     /// Delete a task by id (used when the user removes it from the UI).
+    /// `segments` rows cascade via the foreign key.
     pub fn delete(&self, id: &str) -> SnapResult<()> {
-        self.with_conn(|conn| {
-            conn.execute("DELETE FROM downloads WHERE id = ?1", params![id])?;
-            Ok(())
-        })
+        let changed = self.with_conn(|conn| {
+            Ok(conn.execute("DELETE FROM downloads WHERE id = ?1", params![id])?)
+        })?;
+        if changed == 0 {
+            return Err(SnapError::Internal(format!("no such task: {id}")));
+        }
+        Ok(())
     }
 }
 
@@ -159,6 +188,16 @@ fn task_row_mapper(r: &rusqlite::Row<'_>) -> rusqlite::Result<DownloadTask> {
     let progress: f64 = r.get(5)?;
     let output_path: Option<String> = r.get(6)?;
     let error: Option<String> = r.get(7)?;
+    let streams_json: String = r.get(8)?;
+    let chosen_json: String = r.get(9)?;
+
+    let json_err = |index: usize, e: serde_json::Error| {
+        rusqlite::Error::FromSqlConversionFailure(index, rusqlite::types::Type::Text, Box::new(e))
+    };
+    let streams: Vec<Stream> = serde_json::from_str(&streams_json).map_err(|e| json_err(8, e))?;
+    let chosen_streams: Vec<Stream> =
+        serde_json::from_str(&chosen_json).map_err(|e| json_err(9, e))?;
+
     Ok(DownloadTask {
         id,
         media_info: MediaInfo {
@@ -168,9 +207,9 @@ fn task_row_mapper(r: &rusqlite::Row<'_>) -> rusqlite::Result<DownloadTask> {
             duration_s: None,
             thumbnail,
             source_url: url,
-            streams: Vec::new(),
+            streams,
         },
-        chosen_streams: Vec::new(),
+        chosen_streams,
         state: DownloadState::from_str(&state_s).unwrap_or(DownloadState::Failed),
         progress,
         speed_bps: None,
@@ -216,12 +255,10 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (y + i64::from(m <= 2), m, d)
 }
 
-#[allow(dead_code)]
-fn unused(_: Stream) {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::StreamKind;
 
     fn sample_task(id: &str) -> DownloadTask {
         DownloadTask {
@@ -235,7 +272,7 @@ mod tests {
                 source_url: "https://example.com/video".into(),
                 streams: vec![Stream {
                     url: "https://example.com/stream".into(),
-                    kind: crate::models::StreamKind::Muxed,
+                    kind: StreamKind::Muxed,
                     container: Some("mp4".into()),
                     codec: None,
                     width: Some(1920),
@@ -255,39 +292,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn civil_dates() {
-        assert_eq!(unix_to_iso8601(0), "1970-01-01T00:00:00Z");
-        assert_eq!(unix_to_iso8601(1_000_000_000), "2001-09-09T01:46:40Z");
-    }
-
-    #[test]
-    fn queue_roundtrip() {
-        let dir = tempfile_dir();
-        let queue = Queue::open(&dir).unwrap();
-        let task = sample_task("t1");
-        queue.push(&task).unwrap();
-        let popped = queue.pop_next().unwrap().expect("should pop t1");
-        assert_eq!(popped.id, "t1");
-        assert_eq!(popped.media_info.title, "Sample");
-        // Mark running.
-        let mut running = popped.clone();
-        running.state = DownloadState::Running;
-        running.progress = 0.5;
-        queue.update(&running).unwrap();
-        // Queue should now be empty.
-        assert!(queue.pop_next().unwrap().is_none());
-        let listed = queue.list().unwrap();
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].state, DownloadState::Running);
-        assert_eq!(listed[0].progress, 0.5);
-        queue.delete("t1").unwrap();
-        assert!(queue.list().unwrap().is_empty());
-    }
-
-    fn tempfile_dir() -> std::path::PathBuf {
+    fn temp_db() -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "snaptube-queue-test-{}",
+            "open-tube-queue-test-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -295,5 +302,95 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         dir.join("queue.db")
+    }
+
+    #[test]
+    fn civil_dates() {
+        assert_eq!(unix_to_iso8601(0), "1970-01-01T00:00:00Z");
+        assert_eq!(unix_to_iso8601(1_000_000_000), "2001-09-09T01:46:40Z");
+        assert_eq!(unix_to_iso8601(951_782_400), "2000-02-29T00:00:00Z");
+    }
+
+    #[test]
+    fn queue_roundtrip_keeps_every_field() {
+        let path = temp_db();
+        let queue = Queue::open(&path).unwrap();
+        queue.push(&sample_task("t1")).unwrap();
+
+        let claimed = queue.claim_next().unwrap().expect("should claim t1");
+        assert_eq!(claimed.id, "t1");
+        assert_eq!(claimed.media_info.title, "Sample");
+        assert_eq!(claimed.state, DownloadState::Running);
+        assert_eq!(claimed.media_info.streams.len(), 1, "streams must survive");
+
+        // Claimed tasks are no longer queued.
+        assert!(queue.claim_next().unwrap().is_none());
+
+        let mut running = claimed.clone();
+        running.state = DownloadState::Done;
+        running.progress = 1.0;
+        queue.update(&running).unwrap();
+
+        let listed = queue.list().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].state, DownloadState::Done);
+        assert_eq!(listed[0].progress, 1.0);
+
+        queue.delete("t1").unwrap();
+        assert!(queue.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn claim_is_fifo_and_atomic() {
+        let path = temp_db();
+        let queue = Queue::open(&path).unwrap();
+        queue.push(&sample_task("first")).unwrap();
+        queue.push(&sample_task("second")).unwrap();
+
+        let a = queue.claim_next().unwrap().expect("first");
+        let b = queue.claim_next().unwrap().expect("second");
+        assert_eq!(a.id, "first");
+        assert_eq!(b.id, "second");
+        assert!(queue.claim_next().unwrap().is_none());
+    }
+
+    #[test]
+    fn reopen_requeues_interrupted_tasks() {
+        let path = temp_db();
+        {
+            let queue = Queue::open(&path).unwrap();
+            queue.push(&sample_task("t1")).unwrap();
+            queue.claim_next().unwrap().expect("claimed");
+        }
+        let queue = Queue::open(&path).unwrap();
+        let task = queue.claim_next().unwrap().expect("requeued after restart");
+        assert_eq!(task.id, "t1");
+    }
+
+    #[test]
+    fn upsert_keeps_position_and_updates_fields() {
+        let path = temp_db();
+        let queue = Queue::open(&path).unwrap();
+        queue.push(&sample_task("old")).unwrap();
+        queue.push(&sample_task("new")).unwrap();
+
+        let mut old = sample_task("old");
+        old.media_info.title = "Renamed".into();
+        queue.push(&old).unwrap();
+
+        assert_eq!(queue.peek_next().unwrap().unwrap().id, "old");
+        assert_eq!(
+            queue.peek_next().unwrap().unwrap().media_info.title,
+            "Renamed"
+        );
+    }
+
+    #[test]
+    fn update_and_delete_report_missing_tasks() {
+        let queue = Queue::open(&temp_db()).unwrap();
+        let mut ghost = sample_task("ghost");
+        ghost.state = DownloadState::Done;
+        assert!(queue.update(&ghost).is_err());
+        assert!(queue.delete("ghost").is_err());
     }
 }

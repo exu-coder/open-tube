@@ -67,6 +67,9 @@ impl DownloadState {
         }
     }
 
+    // Kept as an inherent helper for the SQLite mapper; FromStr would be
+    // infallible-by-convention and cannot express "unknown state" as None.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         Some(match s {
             "queued" => DownloadState::Queued,

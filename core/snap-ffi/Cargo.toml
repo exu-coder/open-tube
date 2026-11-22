@@ -8,10 +8,17 @@ license = "GPL-3.0-or-later"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = []
+# Only needed for the bindgen helper binary; the cdylib never enables it.
+cli = ["uniffi/cli"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["cli"]
+
 [dependencies]
 snap-core = { path = "../snap-core" }
 uniffi = "0.32"
 tracing = "0.1"
-
-[dev-dependencies]
-tokio = { version = "1", features = ["full"] }

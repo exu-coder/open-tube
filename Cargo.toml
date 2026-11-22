@@ -5,11 +5,14 @@ members = ["core/snap-core", "core/snap-hls", "core/snap-ffi"]
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.88"
 
 [profile.release]
 opt-level = "z"
 lto = true
-strip = true
+# `strip = true` removes the ELF symbol table that uniffi-bindgen reads from
+# the cdylib; stripping debuginfo only keeps the UniFFI metadata discoverable.
+strip = "debuginfo"
 
 [profile.dev]
 opt-level = 1

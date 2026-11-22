@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Open Tube</string>
+    <string name="native_init_failed">Native library is unavailable on this device.</string>
+</resources>

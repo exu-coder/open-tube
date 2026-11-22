@@ -7,12 +7,7 @@ license = "GPL-3.0-or-later"
 
 [dependencies]
 snap-core = { path = "../snap-core" }
-tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.12", default-features = false, features = ["stream", "rustls-tls"] }
 m3u8-rs = "2"
 aes = "0.8"
-cbc = "0.1"
-tracing = "0.1"
-
-[dev-dependencies]
-tempfile = "3"
+cbc = { version = "0.1", features = ["block-padding"] }
+url = "2"

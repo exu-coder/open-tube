@@ -1,10 +1,9 @@
 //! HLS support for Open tube.
 //!
-//! Planned modules (build step 7 of the project plan):
-//! - `playlist`: master + media playlist parsing with quality selection
-//! - `aes`: AES-128-CBC segment decryption
-//! - `merge`: segment download (parallel), fMP4 init segments, concat/mux
+//! - [`playlist`]: master + media playlist parsing with URI resolution
+//! - [`aes`]: AES-128-CBC segment decryption (PKCS#7 validated)
+//! - [`merge`]: segment concatenation / muxing (not implemented yet)
 
-pub mod playlist;
 pub mod aes;
 pub mod merge;
+pub mod playlist;

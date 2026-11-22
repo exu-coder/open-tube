@@ -39,7 +39,10 @@ impl ProviderChain {
     }
 
     pub fn provider_names(&self) -> Vec<String> {
-        self.providers.iter().map(|p| p.name().to_string()).collect()
+        self.providers
+            .iter()
+            .map(|p| p.name().to_string())
+            .collect()
     }
 
     pub async fn resolve(&self, url: &str) -> SnapResult<MediaInfo> {
