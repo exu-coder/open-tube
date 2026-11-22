@@ -23,9 +23,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install pinned Rust toolchain
+      - name: Install Rust toolchain (see rust-toolchain.toml)
         run: |
-          rustup toolchain install 1.90.0 --profile minimal \
+          rustup toolchain install stable --profile minimal \
             --component rustfmt --component clippy \
             --target aarch64-linux-android \
             --target armv7-linux-androideabi \
@@ -53,14 +53,17 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - uses: android-actions/setup-android@v3
-
       - name: Install Android SDK packages
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358"
+        # ubuntu-latest ships cmdline-tools and the SDK at $ANDROID_HOME.
+        # Do not use android-actions/setup-android: it installs the removed
+        # `tools` package and fails on current SDK repositories.
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358"
 
       - name: Install Rust targets and cargo-ndk
         run: |
-          rustup toolchain install 1.90.0 --profile minimal \
+          rustup toolchain install stable --profile minimal \
             --target aarch64-linux-android \
             --target armv7-linux-androideabi \
             --target x86_64-linux-android
