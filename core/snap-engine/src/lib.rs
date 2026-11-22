@@ -250,6 +250,7 @@ impl Engine {
         let started = Instant::now();
         let mut last_emit = Instant::now();
         let mut written = 0u64;
+        let mut first_chunk = true;
 
         while let Some(chunk) = chunks.next().await {
             let chunk = chunk.map_err(|e| SnapError::Network(e.to_string()))?;
@@ -260,10 +261,11 @@ impl Engine {
                 file.flush().await?;
                 return Err(SnapError::Internal("cancelled".into()));
             }
-            if written == chunk.len() || last_emit.elapsed() >= Duration::from_millis(200) {
+            if first_chunk || last_emit.elapsed() >= Duration::from_millis(200) {
                 let (speed, eta) = speed_eta(written, total, started.elapsed());
                 on_progress(progress(task_id, base, span, written, total, speed, eta));
                 last_emit = Instant::now();
+                first_chunk = false;
             }
         }
         file.flush().await?;
