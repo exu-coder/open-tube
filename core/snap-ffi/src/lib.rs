@@ -4,7 +4,7 @@
 //! `app/build/generated/uniffi` (package `com.opentube.ffi`); the generated
 //! code loads `libsnap_ffi.so` through JNA.
 
-/// Pin the namespace so the generated object is always `SnapFfi`.
+// Pin the namespace so the generated object is always `SnapFfi`.
 uniffi::setup_scaffolding!("snap_ffi");
 
 /// Step 1 smoke test: hello callable from Kotlin.

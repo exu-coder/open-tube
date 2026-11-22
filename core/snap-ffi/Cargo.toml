@@ -19,6 +19,5 @@ path = "src/bin/uniffi-bindgen.rs"
 required-features = ["cli"]
 
 [dependencies]
-snap-core = { path = "../snap-core" }
 uniffi = "0.32"
 tracing = "0.1"

@@ -3,6 +3,7 @@
 //! Relative URIs (segments, keys, init sections, variants) are resolved
 //! against the playlist URL, because HLS bodies are almost always relative.
 
+use m3u8_rs::playlist::{ByteRange as M3u8ByteRange, Key, Playlist};
 use snap_core::{SnapError, SnapResult};
 use url::Url;
 
@@ -59,7 +60,7 @@ pub struct Variant {
 /// Parse a media playlist, resolving every URI against `base`.
 pub fn parse(text: &str, base: &Url) -> SnapResult<MediaPlaylist> {
     match m3u8_rs::parse_playlist_res(text.as_bytes()) {
-        Ok(m3u8_rs::Playlist::MediaPlaylist(p)) => {
+        Ok(Playlist::MediaPlaylist(p)) => {
             let media_sequence = p.media_sequence.max(0) as u64;
             let mut segments = Vec::with_capacity(p.segments.len());
             for (index, seg) in p.segments.iter().enumerate() {
@@ -79,7 +80,7 @@ pub fn parse(text: &str, base: &Url) -> SnapResult<MediaPlaylist> {
                 segments,
             })
         }
-        Ok(m3u8_rs::Playlist::MasterPlaylist(_)) => Err(SnapError::Parse(
+        Ok(Playlist::MasterPlaylist(_)) => Err(SnapError::Parse(
             "expected a media playlist, got a master playlist".into(),
         )),
         Err(e) => Err(SnapError::Parse(format!("invalid media playlist: {e:?}"))),
@@ -89,7 +90,7 @@ pub fn parse(text: &str, base: &Url) -> SnapResult<MediaPlaylist> {
 /// Parse a master playlist, resolving variant URIs against `base`.
 pub fn parse_master(text: &str, base: &Url) -> SnapResult<Vec<Variant>> {
     match m3u8_rs::parse_playlist_res(text.as_bytes()) {
-        Ok(m3u8_rs::Playlist::MasterPlaylist(m)) => m
+        Ok(Playlist::MasterPlaylist(m)) => m
             .variants
             .iter()
             .map(|v| {
@@ -101,7 +102,7 @@ pub fn parse_master(text: &str, base: &Url) -> SnapResult<Vec<Variant>> {
                 })
             })
             .collect(),
-        Ok(m3u8_rs::Playlist::MediaPlaylist(_)) => Err(SnapError::Parse(
+        Ok(Playlist::MediaPlaylist(_)) => Err(SnapError::Parse(
             "expected a master playlist, got a media playlist".into(),
         )),
         Err(e) => Err(SnapError::Parse(format!("invalid master playlist: {e:?}"))),
@@ -114,7 +115,7 @@ fn join(base: &Url, reference: &str) -> SnapResult<String> {
         .map_err(|e| SnapError::Parse(format!("bad uri {reference:?}: {e}")))
 }
 
-fn key_info(base: &Url, key: &m3u8_rs::Key) -> SnapResult<KeyInfo> {
+fn key_info(base: &Url, key: &Key) -> SnapResult<KeyInfo> {
     if !key.method.eq_ignore_ascii_case("AES-128") {
         return Err(SnapError::UnsupportedSite(format!(
             "unsupported HLS encryption method {:?}",
@@ -150,7 +151,7 @@ fn parse_iv(raw: &str) -> SnapResult<[u8; 16]> {
     Ok(iv)
 }
 
-fn byte_range(r: &m3u8_rs::ByteRange) -> ByteRange {
+fn byte_range(r: &M3u8ByteRange) -> ByteRange {
     ByteRange {
         length: r.length.max(0) as u64,
         offset: r.offset.map(|o| o.max(0) as u64),
