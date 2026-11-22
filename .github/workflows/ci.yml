@@ -91,6 +91,9 @@ jobs:
             --out-dir app/build/generated/uniffi \
             --no-format
 
+      - name: Show generated bindings
+        run: find app/build/generated/uniffi -type f -print -exec head -n 3 {} \;
+
       - name: Build Android native libraries
         env:
           CARGO_NDK_PLATFORM: '26'

@@ -1,4 +1,0 @@
-[bindings.kotlin]
-package_name = "com.opentube.ffi"
-cdylib_name = "snap_ffi"
-android = true

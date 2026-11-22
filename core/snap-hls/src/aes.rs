@@ -54,6 +54,9 @@ pub fn decrypt(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cbc::cipher::BlockEncryptMut;
+
+    type Aes128CbcEnc = cbc::Encryptor<aes::Aes128>;
 
     const KEY: [u8; 16] = [
         0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f,
@@ -64,19 +67,22 @@ mod tests {
         0x0f,
     ];
 
-    /// NIST SP 800-38A F.2.1 AES-128-CBC known-answer test.
+    /// Round-trip with the same AES-128-CBC primitive the decrypt path uses.
+    /// (Raw NIST CBC vectors are unpadded and are intentionally rejected by
+    /// our strict PKCS#7 API; the rejection is covered in `rejects_bad_inputs`.)
     #[test]
-    fn aes128_cbc_known_answer() {
-        let ciphertext: [u8; 16] = [
-            0x76, 0x49, 0xab, 0xac, 0x81, 0x19, 0xb2, 0x46, 0xce, 0xe9, 0x8e, 0x9b, 0x12, 0xe9,
-            0x19, 0x7d,
-        ];
-        let expected: [u8; 16] = [
-            0x6b, 0xc1, 0xbe, 0xe2, 0x2e, 0x40, 0x9f, 0x96, 0xe9, 0x3d, 0x7e, 0x11, 0x73, 0x93,
-            0x17, 0x2a,
-        ];
-        let plain = decrypt(&ciphertext, &KEY, Some(&IV), 0).expect("known answer must decrypt");
-        assert_eq!(plain, expected);
+    fn aes128_cbc_round_trip() {
+        let plaintext: &[u8] = b"0123456789abcdef";
+        let mut buf = [0u8; 32];
+        buf[..plaintext.len()].copy_from_slice(plaintext);
+        let ciphertext = Aes128CbcEnc::new_from_slices(&KEY, &IV)
+            .expect("valid key/iv")
+            .encrypt_padded_mut::<Pkcs7>(&mut buf, plaintext.len())
+            .expect("encryption must succeed");
+        assert_eq!(ciphertext.len(), 32, "PKCS#7 adds a full block");
+
+        let plain = decrypt(ciphertext, &KEY, Some(&IV), 0).expect("round-trip must decrypt");
+        assert_eq!(plain, plaintext);
     }
 
     #[test]

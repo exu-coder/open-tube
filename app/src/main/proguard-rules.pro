@@ -2,9 +2,9 @@
 # the generated bindings or JNA's callback/Structure machinery.
 -keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod
 
--keep class com.opentube.ffi.** { *; }
--keepclassmembers class com.opentube.ffi.** { *; }
--keep interface com.opentube.ffi.** { *; }
+-keep class uniffi.snap_ffi.** { *; }
+-keepclassmembers class uniffi.snap_ffi.** { *; }
+-keep interface uniffi.snap_ffi.** { *; }
 
 -keep class com.sun.jna.** { *; }
 -keepclassmembers class com.sun.jna.** { *; }

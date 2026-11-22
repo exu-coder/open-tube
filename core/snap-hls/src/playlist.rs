@@ -59,6 +59,7 @@ pub struct Variant {
 
 /// Parse a media playlist, resolving every URI against `base`.
 pub fn parse(text: &str, base: &Url) -> SnapResult<MediaPlaylist> {
+    require_header(text)?;
     match m3u8_rs::parse_playlist_res(text.as_bytes()) {
         Ok(Playlist::MediaPlaylist(p)) => {
             let media_sequence = p.media_sequence.max(0) as u64;
@@ -72,6 +73,9 @@ pub fn parse(text: &str, base: &Url) -> SnapResult<MediaPlaylist> {
                     init: seg.map.as_ref().map(|m| join(base, &m.uri)).transpose()?,
                     byte_range: seg.byte_range.as_ref().map(byte_range),
                 });
+            }
+            if segments.is_empty() {
+                return Err(SnapError::Parse("media playlist has no segments".into()));
             }
             Ok(MediaPlaylist {
                 target_duration_s: f64::from(p.target_duration),
@@ -89,24 +93,42 @@ pub fn parse(text: &str, base: &Url) -> SnapResult<MediaPlaylist> {
 
 /// Parse a master playlist, resolving variant URIs against `base`.
 pub fn parse_master(text: &str, base: &Url) -> SnapResult<Vec<Variant>> {
+    require_header(text)?;
     match m3u8_rs::parse_playlist_res(text.as_bytes()) {
-        Ok(Playlist::MasterPlaylist(m)) => m
-            .variants
-            .iter()
-            .map(|v| {
-                Ok(Variant {
-                    uri: join(base, &v.uri)?,
-                    bandwidth_bps: v.bandwidth.trim().parse().ok(),
-                    resolution: v.resolution.as_deref().and_then(parse_resolution),
-                    codecs: v.codecs.clone(),
+        Ok(Playlist::MasterPlaylist(m)) => {
+            let variants: Vec<Variant> = m
+                .variants
+                .iter()
+                .map(|v| {
+                    Ok(Variant {
+                        uri: join(base, &v.uri)?,
+                        bandwidth_bps: v.bandwidth.trim().parse().ok(),
+                        resolution: v.resolution.as_deref().and_then(parse_resolution),
+                        codecs: v.codecs.clone(),
+                    })
                 })
-            })
-            .collect(),
+                .collect::<SnapResult<_>>()?;
+            if variants.is_empty() {
+                return Err(SnapError::Parse("master playlist has no variants".into()));
+            }
+            Ok(variants)
+        }
         Ok(Playlist::MediaPlaylist(_)) => Err(SnapError::Parse(
             "expected a master playlist, got a media playlist".into(),
         )),
         Err(e) => Err(SnapError::Parse(format!("invalid master playlist: {e:?}"))),
     }
+}
+
+/// m3u8-rs accepts arbitrary text as an empty playlist; require the HLS
+/// header so garbage input cannot silently become "0 segments downloaded".
+fn require_header(text: &str) -> SnapResult<()> {
+    if !text.trim_start().starts_with("#EXTM3U") {
+        return Err(SnapError::Parse(
+            "playlist is missing the #EXTM3U header".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn join(base: &Url, reference: &str) -> SnapResult<String> {
