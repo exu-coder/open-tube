@@ -9,7 +9,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::error::{SnapError, SnapResult};
-use crate::models::MediaInfo;
+use crate::models::{MediaInfo, Stream, StreamKind};
 
 #[async_trait]
 pub trait Provider: Send + Sync {
@@ -57,6 +57,89 @@ impl ProviderChain {
             }
         }
         Err(SnapError::NoProvider(url.to_string()))
+    }
+}
+
+/// Provider for direct media URLs (mp4/m3u8/mp3/...). This is the first
+/// working end-to-end path: paste a media URL, get a single stream back.
+pub struct DirectUrlProvider;
+
+const DIRECT_EXTENSIONS: &[&str] = &[
+    "mp4", "m4v", "mov", "webm", "mkv", "ts", "m3u8", "mp3", "m4a", "aac", "ogg", "opus", "wav",
+];
+
+fn url_extension(url: &str) -> String {
+    let without_query = url.split(['?', '#']).next().unwrap_or(url);
+    let filename = without_query.rsplit('/').next().unwrap_or("");
+    filename
+        .rsplit_once('.')
+        .map(|(_, ext)| ext.to_ascii_lowercase())
+        .unwrap_or_default()
+}
+
+impl DirectUrlProvider {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for DirectUrlProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl Provider for DirectUrlProvider {
+    fn name(&self) -> &str {
+        "direct"
+    }
+
+    fn can_handle(&self, url: &str) -> bool {
+        DIRECT_EXTENSIONS.contains(&url_extension(url).as_str())
+    }
+
+    async fn resolve(&self, url: &str) -> SnapResult<MediaInfo> {
+        if !self.can_handle(url) {
+            return Err(SnapError::UnsupportedSite(url.to_string()));
+        }
+        let ext = url_extension(url);
+        let without_query = url.split(['?', '#']).next().unwrap_or(url);
+        let title = without_query
+            .rsplit('/')
+            .next()
+            .unwrap_or("media")
+            .to_string();
+        let kind = if ext == "mp3"
+            || ext == "m4a"
+            || ext == "aac"
+            || ext == "ogg"
+            || ext == "opus"
+            || ext == "wav"
+        {
+            StreamKind::Audio
+        } else {
+            StreamKind::Muxed
+        };
+        Ok(MediaInfo {
+            id: format!("direct-{title}"),
+            title: title.clone(),
+            uploader: "Direct URL".into(),
+            duration_s: None,
+            thumbnail: None,
+            source_url: url.to_string(),
+            streams: vec![Stream {
+                url: url.to_string(),
+                kind,
+                container: Some(ext),
+                codec: None,
+                width: None,
+                height: None,
+                bitrate_bps: None,
+                size_bytes: None,
+                headers: Default::default(),
+            }],
+        })
     }
 }
 
@@ -111,6 +194,21 @@ mod tests {
         }));
         let info = chain.resolve("https://example.com/stub").await.unwrap();
         assert_eq!(info.title, "Stub");
+    }
+
+    #[tokio::test]
+    async fn direct_url_provider() {
+        let p = DirectUrlProvider::new();
+        assert!(p.can_handle("https://cdn.example/video.mp4?token=1"));
+        assert!(p.can_handle("https://cdn.example/master.m3u8"));
+        assert!(!p.can_handle("https://example.com/watch?v=1"));
+        let info = p
+            .resolve("https://cdn.example/song.mp3?x=1")
+            .await
+            .expect("resolve");
+        assert_eq!(info.title, "song.mp3");
+        assert_eq!(info.streams[0].kind, StreamKind::Audio);
+        assert_eq!(info.streams[0].container.as_deref(), Some("mp3"));
     }
 
     #[tokio::test]

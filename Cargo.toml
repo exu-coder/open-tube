@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["core/snap-core", "core/snap-hls", "core/snap-ffi"]
+members = ["core/snap-core", "core/snap-hls", "core/snap-engine", "core/snap-ffi"]
 
 [workspace.package]
 version = "0.1.0"
