@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = ["core/snap-core", "core/snap-hls", "core/snap-ffi"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+
+[profile.dev]
+opt-level = 1

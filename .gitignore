@@ -1,0 +1,8 @@
+/target
+/app/build
+/app/src/main/java/snap*
+/.gradle
+local.properties
+*.so
+*.apk
+*.apks

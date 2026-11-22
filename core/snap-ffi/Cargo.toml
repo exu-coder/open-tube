@@ -1,0 +1,17 @@
+[package]
+name = "snap-ffi"
+version.workspace = true
+edition.workspace = true
+description = "Open tube: UniFFI interface, callbacks, runtime setup"
+license = "GPL-3.0-or-later"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+snap-core = { path = "../snap-core" }
+uniffi = "0.32"
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
