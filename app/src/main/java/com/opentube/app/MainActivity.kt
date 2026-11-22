@@ -7,7 +7,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
-import uniffi.snap_ffi.SnapFfi
+import uniffi.snap_ffi.hello
 
 class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -30,7 +30,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         // A missing or ABI-incompatible .so must not kill the process on boot.
-        text.text = runCatching<String> { SnapFfi.hello() }.getOrElse { e ->
+        text.text = runCatching<String> { hello() }.getOrElse { e ->
             Log.e("OpenTube", "native library unavailable", e)
             getString(R.string.native_init_failed)
         }
