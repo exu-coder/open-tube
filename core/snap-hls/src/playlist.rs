@@ -138,7 +138,7 @@ fn parse_iv(raw: &str) -> SnapResult<[u8; 16]> {
         .strip_prefix("0x")
         .or_else(|| raw.strip_prefix("0X"))
         .unwrap_or(raw);
-    if hex.is_empty() || hex.len() > 32 || hex.len() % 2 != 0 {
+    if hex.is_empty() || hex.len() > 32 || !hex.len().is_multiple_of(2) {
         return Err(SnapError::Parse(format!("invalid EXT-X-KEY IV {raw:?}")));
     }
     let mut iv = [0u8; 16];
